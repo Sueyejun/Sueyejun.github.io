@@ -19,6 +19,7 @@
             height: 100vh;
             margin: 0;
             overflow: hidden;
+            touch-action: manipulation; /* Disable double-tap to zoom */
         }
         .game-container {
             display: flex;
@@ -149,15 +150,20 @@
             display: flex;
             align-items: center;
             justify-content: center;
+            -webkit-user-select: none; /* Safari */
+            -ms-user-select: none; /* IE 10+ */
+            user-select: none; /* Standard syntax */
         }
         .wide-btn {
-            width: 130px;
+            width: 100%;
         }
 
-        @media (max-width: 768px) {
+        @media (max-width: 800px) {
             body { height: auto; padding: 10px; }
             .game-container { flex-direction: column; align-items: center; gap: 20px; }
-            .info-panel { order: -1; width: 100%; flex-direction: row; justify-content: space-around; flex-wrap: wrap; gap: 10px; }
+            .info-panel { order: 1; width: 100%; max-width: 300px; }
+            .side-info { display: none; }
+            .main-info { order: -1; display: flex; width: 100%; justify-content: space-around; }
             .info-box { flex: 1; padding: 10px; min-width: 100px; }
             .info-box h2 { font-size: 0.7rem; }
             .info-box p { font-size: 1rem; }
@@ -168,8 +174,7 @@
 <body>
 
 <div id="game-container" class="game-container">
-    <canvas id="tetris" width="300" height="600"></canvas>
-    <div class="info-panel">
+    <div class="main-info">
         <div class="info-box">
             <h2>SCORE</h2>
             <p id="score">0</p>
@@ -178,19 +183,37 @@
             <h2>LEVEL</h2>
             <p id="level">1</p>
         </div>
-        <div class="info-box">
-            <h2>NEXT</h2>
-            <canvas id="next-canvas" width="120" height="120"></canvas>
-        </div>
-        <div class="info-box">
-            <h2>HOLD</h2>
-            <canvas id="hold-canvas" width="120" height="120"></canvas>
+    </div>
+    <canvas id="tetris" width="300" height="600"></canvas>
+    <div class="info-panel">
+        <div class="side-info" style="display: flex; flex-direction: column; gap: 15px;">
+            <div class="info-box">
+                <h2>NEXT</h2>
+                <canvas id="next-canvas" width="120" height="120"></canvas>
+            </div>
+            <div class="info-box">
+                <h2>HOLD</h2>
+                <canvas id="hold-canvas" width="120" height="120"></canvas>
+            </div>
         </div>
         <button id="start-button">Start Game</button>
         <button id="settings-button">Settings</button>
+        <!-- Mobile Controls Start -->
         <div class="controls">
-             <!-- ... Mobile Controls ... -->
+            <div class="control-row">
+                <button id="mobile-rotate" class="control-btn">🔄</button>
+                <button id="mobile-hold" class="control-btn">HOLD</button>
+            </div>
+            <div class="control-row">
+                <button id="mobile-left" class="control-btn">◀</button>
+                <button id="mobile-down" class="control-btn">▼</button>
+                <button id="mobile-right" class="control-btn">▶</button>
+            </div>
+            <div class="control-row">
+                <button id="mobile-hard-drop" class="control-btn wide-btn">DROP</button>
+            </div>
         </div>
+        <!-- Mobile Controls End -->
     </div>
 </div>
 
@@ -431,17 +454,6 @@
         });
     }
 
-    function rotate(p) {
-        let clone = JSON.parse(JSON.stringify(p));
-        for (let y = 0; y < clone.shape.length; ++y) {
-            for (let x = 0; x < y; ++x) {
-                [clone.shape[x][y], clone.shape[y][x]] = [clone.shape[y][x], clone.shape[x][y]];
-            }
-        }
-        clone.shape.forEach(row => row.reverse());
-        return clone;
-    }
-
     function solidify() {
         if (lockTimeout) { clearTimeout(lockTimeout); lockTimeout = null; }
 
@@ -608,6 +620,51 @@
         startButton.disabled = false;
         startButton.style.opacity = '1';
     }
+    
+    function handleKeyAction(action) {
+        let p;
+        switch (action) {
+            case 'left':
+            case 'right':
+                 if (dasDirection) return; 
+                 dasDirection = action;
+                 p = action === 'left' ? { ...piece, x: piece.x - 1 } : { ...piece, x: piece.x + 1 };
+                 if (isValid(p)) { piece.move(p); handleMoveResult(); }
+                 dasTimeout = setTimeout(() => {
+                     dasInterval = setInterval(() => {
+                         const p = dasDirection === 'left' ? { ...piece, x: piece.x - 1 } : { ...piece, x: piece.x + 1 };
+                          if (isValid(p)) { piece.move(p); handleMoveResult(); }
+                     }, 50);
+                 }, 160);
+                 break;
+            case 'softDrop':
+                p = { ...piece, y: piece.y + 1 };
+                if (isValid(p)) { piece.move(p); score += 1; updateUI(); }
+                handleMoveResult();
+                break;
+            case 'rotate':
+                if (!piece) break;
+                let currentShapeId = piece.shapeId;
+                let nextShapeId = currentShapeId + 1;
+                if (nextShapeId >= SHAPES.length) { nextShapeId = 1; }
+                const newShape = SHAPES[nextShapeId];
+                let tempPiece = { ...piece, shape: newShape };
+                if (isValid(tempPiece)) {
+                    piece.shape = newShape;
+                    piece.shapeId = nextShapeId;
+                    piece.color = COLORS[nextShapeId];
+                    handleMoveResult();
+                }
+                break;
+            case 'hardDrop':
+                hardDrop();
+                break;
+            case 'hold':
+                hold();
+                break;
+        }
+    }
+
 
     document.addEventListener('keydown', (e) => {
         if (isListeningForKey) {
@@ -619,74 +676,15 @@
             actionToChange = null;
             return;
         }
-
         if (gameOver) return;
-
         const action = Object.keys(keyMappings).find(key => keyMappings[key] === e.code);
-        let p;
-
-        if (action === 'left' || action === 'right') {
-            if (dasDirection) return; 
-
-            dasDirection = action;
-            p = action === 'left' ? { ...piece, x: piece.x - 1 } : { ...piece, x: piece.x + 1 };
-            if (isValid(p)) {
-                piece.move(p);
-                handleMoveResult();
-            }
-
-            dasTimeout = setTimeout(() => {
-                dasInterval = setInterval(() => {
-                    const p = dasDirection === 'left' ? { ...piece, x: piece.x - 1 } : { ...piece, x: piece.x + 1 };
-                     if (isValid(p)) {
-                        piece.move(p);
-                        handleMoveResult();
-                    }
-                }, 50);
-            }, 160); 
-
-        } else {
-            switch (action) {
-                case 'softDrop':
-                    p = { ...piece, y: piece.y + 1 };
-                    if (isValid(p)) {
-                        piece.move(p);
-                        score += 1;
-                        updateUI();
-                    }
-                    handleMoveResult();
-                    break;
-                case 'rotate':
-                    if (!piece) break;
-                    let currentShapeId = piece.shapeId;
-                    let nextShapeId = currentShapeId + 1;
-                    if (nextShapeId >= SHAPES.length) {
-                        nextShapeId = 1; 
-                    }
-
-                    const newShape = SHAPES[nextShapeId];
-                    let tempPiece = { ...piece, shape: newShape };
-
-                    if (isValid(tempPiece)) {
-                        piece.shape = newShape;
-                        piece.shapeId = nextShapeId;
-                        piece.color = COLORS[nextShapeId];
-                        handleMoveResult();
-                    }
-                    break;
-                case 'hardDrop':
-                    hardDrop();
-                    break;
-                case 'hold':
-                    hold();
-                    break;
-            }
+        if (action) {
+            handleKeyAction(action);
         }
     });
 
     document.addEventListener('keyup', (e) => {
         const action = Object.keys(keyMappings).find(key => keyMappings[key] === e.code);
-
         if (action === dasDirection) {
             clearTimeout(dasTimeout);
             clearInterval(dasInterval);
@@ -736,6 +734,53 @@
         gameOverModal.classList.add('hidden');
         startGame();
     });
+    
+    // --- Mobile Controls ---
+    const mobileLeftBtn = document.getElementById('mobile-left');
+    const mobileRightBtn = document.getElementById('mobile-right');
+    const mobileDownBtn = document.getElementById('mobile-down');
+    const mobileRotateBtn = document.getElementById('mobile-rotate');
+    const mobileHardDropBtn = document.getElementById('mobile-hard-drop');
+    const mobileHoldBtn = document.getElementById('mobile-hold');
+
+    let mobileMoveTimeout = null;
+    let mobileMoveInterval = null;
+
+    function handleMobileAction(action) {
+         if (gameOver) return;
+         handleKeyAction(action); // Reuse the same logic
+    }
+    
+    function startMobileMove(action) {
+        if (gameOver) return;
+        handleMobileAction(action);
+        mobileMoveTimeout = setTimeout(() => {
+            mobileMoveInterval = setInterval(() => {
+                handleMobileAction(action);
+            }, 100); 
+        }, 200);
+    }
+
+    function stopMobileMove() {
+        clearTimeout(mobileMoveTimeout);
+        clearInterval(mobileMoveInterval);
+    }
+
+    mobileRotateBtn.addEventListener('click', () => handleMobileAction('rotate'));
+    mobileHardDropBtn.addEventListener('click', () => handleMobileAction('hardDrop'));
+    mobileHoldBtn.addEventListener('click', () => handleMobileAction('hold'));
+
+    const pressAndHoldEvents = [
+        { btn: mobileLeftBtn, action: 'left' },
+        { btn: mobileRightBtn, action: 'right' },
+        { btn: mobileDownBtn, action: 'softDrop' }
+    ];
+
+    pressAndHoldEvents.forEach(item => {
+        item.btn.addEventListener('touchstart', (e) => { e.preventDefault(); startMobileMove(item.action); }, { passive: false });
+        item.btn.addEventListener('touchend', stopMobileMove);
+        item.btn.addEventListener('touchcancel', stopMobileMove);
+    });
 
     loadKeys();
     updateSettingsUI();
@@ -743,4 +788,5 @@
 </script>
 </body>
 </html>
+
 
